@@ -19,12 +19,14 @@ RSpec.describe "work show view" do
              representative_id: file_set.id)
     end
     let(:user) { create(:user) }
-    let(:file_set) { create(:file_set, user: user, title: ['A Contained FileSet'], content: file) }
     let(:file) { File.open(fixture_path + '/world.png') }
     let(:multi_membership_type_1) { create(:collection_type, :allow_multiple_membership, title: 'Multi-membership 1') }
     let!(:collection) { create(:collection_lw, user: user, collection_type_gid: multi_membership_type_1.gid) }
+    let(:file_set) { create(:file_set, user: user, title: ['A Contained FileSet'], content: file) }
 
     before do
+      work.ordered_members << file_set
+      work.save!
       sign_in user
       visit work_path
     end

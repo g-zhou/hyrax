@@ -1,5 +1,7 @@
 module Hyrax
   class FileSetsController < ApplicationController
+    rescue_from WorkflowAuthorizationException, with: :render_unavailable
+
     include Blacklight::Base
     include Blacklight::AccessControls::Catalog
     include Hyrax::Breadcrumbs
@@ -37,6 +39,7 @@ module Hyrax
 
     # GET /concern/parent/:parent_id/file_sets/:id
     def show
+      workflow_check(parent_id: params[:parent_id])
       respond_to do |wants|
         wants.html { presenter }
         wants.json { presenter }
@@ -47,12 +50,15 @@ module Hyrax
     # DELETE /concern/file_sets/:id
     def destroy
       parent = curation_concern.parent
+      workflow_check(parent_id: parent.id)
       actor.destroy
       redirect_to [main_app, parent], notice: view_context.t('hyrax.file_sets.asset_deleted_flash.message')
     end
 
     # PATCH /concern/file_sets/:id
     def update
+      parent = curation_concern.parent
+      workflow_check(parent_id: parent.id)
       if attempt_update
         after_update_response
       else
@@ -137,9 +143,22 @@ module Hyrax
 
       def initialize_edit_form
         @parent = @file_set.in_objects.first
+        workflow_check(parent_id: @parent.id)
         original = @file_set.original_file
         @version_list = Hyrax::VersionListPresenter.new(original ? original.versions.all : [])
         @groups = current_user.groups
+      end
+
+      def workflow_check(parent_id: nil)
+        return if current_ability.can?(:edit, @solr_document)
+        if parent_id.nil?
+          curation_concern = ::FileSet.find(params[:id])
+          parent = curation_concern.parent
+          parent_id = parent.id
+        end
+        doc = ::SolrDocument.find(parent_id)
+        return if current_ability.can?(:edit, doc)
+        raise WorkflowAuthorizationException if doc.suppressed?
       end
 
       def actor
@@ -155,7 +174,9 @@ module Hyrax
           _, document_list = search_results(params)
           curation_concern = document_list.first
           raise CanCan::AccessDenied unless curation_concern
-          show_presenter.new(curation_concern, current_ability, request)
+          pres = show_presenter.new(curation_concern, current_ability, request)
+          raise WorkflowAuthorizationException if pres.parent_presenter.blank?
+          pres
         end
       end
 
@@ -180,6 +201,36 @@ module Hyrax
                    'dashboard'
                  end
         File.join(theme, layout)
+      end
+
+      # rubocop:disable Metrics/MethodLength
+      def render_unavailable
+        message = I18n.t("hyrax.workflow.unauthorized_parent")
+        respond_to do |wants|
+          wants.html do
+            unavailable_presenter
+            flash[:notice] = message
+            render 'unavailable', status: :unauthorized
+          end
+          wants.json do
+            render plain: message, status: :unauthorized
+          end
+          additional_response_formats(wants)
+          wants.ttl do
+            render plain: message, status: :unauthorized
+          end
+          wants.jsonld do
+            render plain: message, status: :unauthorized
+          end
+          wants.nt do
+            render plain: message, status: :unauthorized
+          end
+        end
+      end
+      # rubocop:enable Metrics/MethodLength
+
+      def unavailable_presenter
+        @presenter ||= show_presenter.new(::SolrDocument.find(params[:id]), current_ability, request)
       end
   end
 end

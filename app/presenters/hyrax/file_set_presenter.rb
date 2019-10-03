@@ -33,6 +33,10 @@ module Hyrax
              :original_file_id,
              to: :solr_document
 
+    def workflow
+      nil
+    end
+
     def single_use_links
       @single_use_links ||= SingleUseLink.where(item_id: id).map { |link| link_presenter_class.new(link) }
     end
@@ -86,8 +90,16 @@ module Hyrax
       @parent_presenter ||= fetch_parent_presenter
     end
 
+    def parent_presenter
+      @parent_presenter ||= fetch_parent_presenter
+    end
+
     def user_can_perform_any_action?
       current_ability.can?(:edit, id) || current_ability.can?(:destroy, id) || current_ability.can?(:download, id)
+    end
+
+    def workflow_restriction?
+      parent_presenter.try(:workflow_restriction?)
     end
 
     private
@@ -99,9 +111,15 @@ module Hyrax
       def fetch_parent_presenter
         ids = Hyrax::SolrService.query("{!field f=member_ids_ssim}#{id}", fl: Hyrax.config.id_field)
                                 .map { |x| x.fetch(Hyrax.config.id_field) }
-        Hyrax::PresenterFactory.build_for(ids: ids,
-                                          presenter_class: WorkShowPresenter,
-                                          presenter_args: current_ability).first
+        ids.each do |id|
+          doc = ::SolrDocument.find(id)
+          next if current_ability.can?(:edit, doc)
+          raise WorkflowAuthorizationException if doc.suppressed? && current_ability.can?(:read, doc)
+        end
+        rv = Hyrax::PresenterFactory.build_for(ids: ids,
+                                               presenter_class: WorkShowPresenter,
+                                               presenter_args: current_ability).first
+        rv
       end
   end
 end
