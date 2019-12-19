@@ -1,4 +1,7 @@
 require 'linkeddata' # we need all the linked data types, because we don't know what types a service might return.
+
+RDF::JSON::LD = JSON::LD # patch for valkyrie#772
+
 module Hyrax
   class DeepIndexingService < BasicMetadataIndexer
     # We're overiding the default indexer in order to index the RDF labels. In order
